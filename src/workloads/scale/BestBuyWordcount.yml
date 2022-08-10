@@ -49,7 +49,7 @@ Actors:
               {$count: "count"},
               {$merge: {
                 into: "target_range_id",
-                # on: "_id",
+                on: "_id",
                 whenMatched: "replace",
                 whenNotMatched: "insert"
               }}
