@@ -1,0 +1,82 @@
+SchemaVersion: 2018-07-01
+# Owning team for agg_merge.js in 10gen/workloads is mongodb/product-query
+Owner: "@mongodb/product-perf"
+Description: |
+  TODO
+
+Keywords:
+- TODO
+
+GlobalDefaults:
+  dbname: &dbname bestbuy
+  # collname: &collname products
+
+# TODO Update all actor/template names
+
+# Actors:
+# # Check server version
+
+# ActorTemplates:
+# - TemplateName: MainAggMergeLoop
+#   Config:
+#     Name: {^Parameter: {Name: "Name", Default: "AggMerge"}}
+#     Type: TODO
+#     Threads: TODO
+#     NumDocsPerMerge: {^Parameter: {Name: "NumDocsPerMerge", Default: [1, 1000, 100000]}}
+#     MatchRatio: {^Parameter: {Name: "MatchRatio", Default: [0, 0.5, 1.0]}}
+#     Modes: {^Parameter: {Name: "Modes", Default: [{whenMatched: "replace", whenNotMatched: "insert"}, {whenMatched: "merge", whenNotMatched: "insert"}] }}
+#     Targets: {^Parameter: {Name: "Targets", Default: ["identical_distribution"]}}
+#     TargetDB: {^Parameter: {Name: "TargetDB", Default: "target"}}
+#     Phases:
+
+
+
+# - TemplateName: RunMergeTemplate
+#   Config:
+#     Name: {^Parameter: {Name: "Name", Default: "RunMerge"}}
+#     Type: RunCommand
+#     Threads: {^Parameter: {Name: "Threads", Default: 1}}
+#     NumDocsPerMerge: {^Parameter: {Name: "NumDocsPerMerge", Default: 1}}
+#     MatchRatio: {^Parameter: {Name: "MatchRatio", Default: 0.5}}
+#     Spec: {^Parameter: {Name: "Spec", Default: {
+#       into: {db: "targetDB", coll: "targetColl"},
+#       whenMatched: true,
+#       whenNotMatched: false  
+#     }}}
+#     Phases:
+#       # Add error checking
+#       # 1. PopulateTargetCollection
+#       # Reset collection
+#       - Duration: TODO
+#         Database: TODO
+#         Operations:
+#         - OperationMetricsName: PopulateTargetCollection
+#           OperationName: RunCommand
+#           OperationCommand:
+#             aggregate: {^Parameter: {Name: "coll", Default: Collection0}}
+#             pipeline: [
+#               {$match: {productId: {$ne: null}}},
+#               {$sort: {_id: 1}},
+#               {$limit: Math.round(nDocsPerMerge * matchRatio)},
+#               {$merge: {into: spec.into, whenMatched: "fail", whenNotMatched: "insert"}}
+#             ]
+#       # 2. RunTrial
+#         - OperationsMetricsName: RunTrial
+#           OperationName: RunCommand
+#           OperationCommand:
+#             aggregate: {^Parameter: {Name: "coll", Default: Collection0}}
+#             pipeline: [
+#                 {$sort: {_id: 1}},
+#                 {$match: {productId: {$ne: null}}},
+#                 {$limit: nDocsPerMerge},
+#                 {$addFields: {fromMerge: true}},
+#                 {$merge: spec}
+#             ]
+  
+
+
+# AutoRun:
+# - When:
+#   mongodb_setup:
+#     $eq:
+#     - TODO

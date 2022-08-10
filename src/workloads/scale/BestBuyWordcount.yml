@@ -1,0 +1,63 @@
+SchemaVersion: 2018-07-01
+# Owning team for bestbuy_wordcount.js in 10gen/workloads is mongodb/product-query
+Owner: "@mongodb/product-perf"
+Description: |
+  TODO
+
+Keywords:
+- TODO
+
+GlobalDefaults:
+  dbname: &dbname bestbuy
+  collname: &collname products
+
+Actors:
+- Name: SoftwareAndGameProductNameWordCounts
+  Type: RunCommand
+  Threads: 1
+  Phases:
+  - Database: *dbname
+    Operations:
+    - OperationName: RunCommand
+      OperationCommand:
+        aggregate: *collname
+        pipeline:
+          [
+            {$match: {type: {$in: ["Software", "Game"]}}},
+            {$project: {wordOfName: {$split: ["$name", " "]}}},
+            {$unwind: "$wordOfName"},
+            {$group: {_id: "$wordOfName", count: {$sum: 1}}},
+            # Not sure if below is correct
+            {$count: "count"}
+          ]
+  - Name: SoftwareAndGameProductNameWordCountsWithMerge
+    Type: RunCommand
+    Threads: 1
+    Phases:
+    - Database: *dbname
+      Operations:
+      - OperationName: RunCommand
+        OperationCommand:
+          aggregate: *collname
+          pipeline:
+            [
+              {$match: {type: {$in: ["Software", "Game"]}}},
+              {$project: {wordOfName: {$split: ["$name", " "]}}},
+              {$unwind: "$wordOfName"},
+              {$group: {_id: "$wordOfName", count: {$sum: 1}}},
+              # Not sure if below is correct
+              {$count: "count"},
+              {$merge: {
+                into: "target_range_id",
+                # on: "_id",
+                whenMatched: "replace",
+                whenNotMatched: "insert"
+              }}
+            ]
+
+AutoRun:
+- When:
+    mongodb_setup:
+      $eq: standalone
+  ThenRun:
+  - mongodb_setup: standalone-bestbuy
