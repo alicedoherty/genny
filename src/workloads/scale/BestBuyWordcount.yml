@@ -4,57 +4,264 @@ Owner: "@mongodb/product-perf"
 Description: |
   TODO
 
+  Based on bestbuy_wordcount.js in 10gen/workloads repo.
+
+  The workload consists of 6 phases:
+    0. Run FilteredWordCountNoMerge, FilteredWordCount, AllWordCountNoMerge and AllWordCount.
+    1. Shard bestbuy.products collection.
+    2. Set internalQueryDisableExchange to true.
+    3. Run FilteredWordCountNoExchange and AllWordCountNoExchange.
+    4. Set internalQueryDisableExchange to false.
+    5. Run FilteredWordCountUseExchange and AllWordCountUseExchange.
+
 Keywords:
 - TODO
 
 GlobalDefaults:
-  dbname: &dbname bestbuy
-  collname: &collname products
+  Database: &Database bestbuy
+  Collection: &Collection products
+  Namespace: &Namespace bestbuy.products  
+  MaxPhases: &MaxPhases 5
+
+ActorTemplates:
+- TemplateName: WordCountTemplate
+  Config:
+    Name: {^Parameter: {Name: "Name", Default: "WordCount"}}
+    Type: RunCommand
+    Threads: 1
+    Phases:
+      OnlyActiveInPhases:
+        Active: {^Parameter: {Name: "ActivePhase", Default: [0]}}
+        NopInPhasesUpTo: *MaxPhases
+        PhaseConfig:
+          Repeat: 1
+          Database: *Database
+          Operations:
+          - OperationName: RunCommand
+            OperationCommand:
+              # Capitalisation is based on what other Genny tests have
+              aggregate: *Collection
+              pipeline: {^Parameter: {Name: "Pipeline", Default: []}}
+              # Need cursor or else with get error
+              cursor: {batchSize: 101}
+
+- TemplateName: AdminCommandTemplate
+  Config:
+    Name: {^Parameter: {Name: "Name", Default: "AdminCommand"}}
+    Type: AdminCommand
+    Threads: 1
+    Phases:
+      OnlyActiveInPhases:
+        Active: {^Parameter: {Name: "ActivePhase", Default: [0]}}
+        NopInPhasesUpTo: *MaxPhases
+        PhaseConfig:
+          Repeat: 1
+          Database: admin
+          Operations:
+          - OperationName: AdminCommand
+            OperationCommand:
+              setParameter: {^Parameter: {Name: "SetParameter", Default: 1}}
+              internalQueryDisableExchange: {^Parameter: {Name: "InternalQueryDisableExchange", Default: true}}
 
 Actors:
-- Name: SoftwareAndGameProductNameWordCounts
-  Type: RunCommand
-  Threads: 1
-  Phases:
-  - Database: *dbname
-    Operations:
-    - OperationName: RunCommand
-      OperationCommand:
-        aggregate: *collname
-        pipeline:
-          [
+# Phase 0
+# filtered_word_count_no_merge
+- ActorFromTemplate:
+    TemplateName: WordCountTemplate
+    TemplateParameters:
+      Name: FilteredWordCountNoMerge
+      ActivePhase: [0]
+      Pipeline: 
+        [
             {$match: {type: {$in: ["Software", "Game"]}}},
             {$project: {wordOfName: {$split: ["$name", " "]}}},
             {$unwind: "$wordOfName"},
             {$group: {_id: "$wordOfName", count: {$sum: 1}}},
-            # Not sure if below is correct
+            # Not sure if the $count is correct
             {$count: "count"}
-          ]
-  - Name: SoftwareAndGameProductNameWordCountsWithMerge
-    Type: RunCommand
-    Threads: 1
-    Phases:
-    - Database: *dbname
-      Operations:
-      - OperationName: RunCommand
-        OperationCommand:
-          aggregate: *collname
-          pipeline:
-            [
-              {$match: {type: {$in: ["Software", "Game"]}}},
-              {$project: {wordOfName: {$split: ["$name", " "]}}},
-              {$unwind: "$wordOfName"},
-              {$group: {_id: "$wordOfName", count: {$sum: 1}}},
-              # Not sure if below is correct
-              {$count: "count"},
-              {$merge: {
-                into: "target_range_id",
-                on: "_id",
-                whenMatched: "replace",
-                whenNotMatched: "insert"
-              }}
-            ]
+        ]
 
+# filtered_word_count
+- ActorFromTemplate:
+    TemplateName: WordCountTemplate
+    TemplateParameters:
+      Name: FilteredWordCount
+      ActivePhase: [0]
+      Pipeline:
+        [
+            {$match: {type: {$in: ["Software", "Game"]}}},
+            {$project: {wordOfName: {$split: ["$name", " "]}}},
+            {$unwind: "$wordOfName"},
+            {$group: {_id: "$wordOfName", count: {$sum: 1}}},
+            {$count: "count"},
+            {$merge: {
+              into: "target_range_id",
+              # Quotation marks are around "on" because it's a YAML keyword
+              "on": "_id",
+              whenMatched: "replace",
+              whenNotMatched: "insert"
+            }}
+        ]
+
+# all_word_count_no_merge
+- ActorFromTemplate:
+    TemplateName: WordCountTemplate
+    TemplateParameters:
+      Name: AllWordCountNoMerge
+      ActivePhase: [0]
+      Pipeline:
+        [
+            {$project: {wordOfDesc: {$split: ["$longDescription", " "]}}},
+            {$unwind: "$wordOfDesc"},
+            {$group: {_id: "$wordOfDesc", count: {$sum: 1}}},
+            {$count: "count"}
+        ]
+
+# all_word_count
+- ActorFromTemplate:
+    TemplateName: WordCountTemplate
+    TemplateParameters:
+      Name: AllWordCount
+      ActivePhase: [0]
+      Pipeline:
+          [
+            {$project: {wordOfDesc: {$split: ["$longDescription", " "]}}},
+            {$unwind: "$wordOfDesc"},
+            {$group: {_id: "$wordOfDesc", count: {$sum: 1}}},
+            {$count: "count"},
+            {$merge: {
+              into: "target_range_id",
+              "on": "_id",
+              whenMatched: "replace",
+              whenNotMatched: "insert"
+            }}
+          ]
+
+# Phase 1: Shard bestbuy.products
+- Name: CreateShardedCollection
+  Type: AdminCommand
+  Threads: 1
+  Phases:
+    OnlyActiveInPhases:
+      Active: [1]
+      NopInPhasesUpTo: *MaxPhases
+      PhaseConfig:
+        Repeat: 1
+        Database: admin
+        # These don't working because I think it's not connected to a mongos
+        Operations:
+        - OperationMetricsName: EnableSharding
+          OperationName: AdminCommand
+          OperationCommand:
+            enableSharding: *Database
+        - OperationMetricsName: ShardCollection
+          OperationName: AdminCommand
+          OperationCommand:
+            shardCollection: *Namespace
+            key: {x: 1}
+
+# Phase 2: Run db.adminCommand({setParameter: 1, internalQueryDisableExchange: true})
+- ActorFromTemplate:
+    TemplateName: AdminCommandTemplate
+    TemplateParameters:
+      Name: AdminCommandNoExchange
+      ActivePhase: [2]
+      SetParameter: 1
+      InternalQueryDisableExchange: true
+
+# Phase 3: Run FilteredWordCountNoExchange and AllWordCountNoExchange
+- ActorFromTemplate:
+    TemplateName: WordCountTemplate
+    TemplateParameters:
+      Name: FilteredWordCountNoExchange
+      ActivePhase: [3]
+      Pipeline:
+        [
+            {$match: {type: {$in: ["Software", "Game"]}}},
+            {$project: {wordOfName: {$split: ["$name", " "]}}},
+            {$unwind: "$wordOfName"},
+            {$group: {_id: "$wordOfName", count: {$sum: 1}}},
+            {$count: "count"},
+            {$merge: {
+              into: "target_range_id",
+              "on": "_id",
+              whenMatched: "replace",
+              whenNotMatched: "insert"
+            }}
+        ]
+
+- ActorFromTemplate:
+    TemplateName: WordCountTemplate
+    TemplateParameters:
+      Name: AllWordCountNoExchange
+      ActivePhase: [3]
+      Pipeline:
+        [
+            {$project: {wordOfDesc: {$split: ["$longDescription", " "]}}},
+            {$unwind: "$wordOfDesc"},
+            {$group: {_id: "$wordOfDesc", count: {$sum: 1}}},
+            {$count: "count"},
+            {$merge: {
+              into: "target_range_id",
+              "on": "_id",
+              whenMatched: "replace",
+              whenNotMatched: "insert"
+            }}
+        ]
+
+# Phase 4: Run db.adminCommand({setParameter: 1, internalQueryDisableExchange: false})
+- ActorFromTemplate:
+    TemplateName: AdminCommandTemplate
+    TemplateParameters:
+      Name: AdminCommandUseExchange
+      ActivePhase: [4]
+      SetParameter: 1
+      InternalQueryDisableExchange: false
+
+# Phase 5: Run FilteredWordCountUseExchange and AllWordCountUseExchange
+- ActorFromTemplate:
+    TemplateName: WordCountTemplate
+    TemplateParameters:
+      Name: FilteredWordCountUseExchange
+      ActivePhase: [5]
+      Pipeline:
+        [
+            {$match: {type: {$in: ["Software", "Game"]}}},
+            {$project: {wordOfName: {$split: ["$name", " "]}}},
+            {$unwind: "$wordOfName"},
+            {$group: {_id: "$wordOfName", count: {$sum: 1}}},
+            {$count: "count"},
+            {$merge: {
+              into: "target_range_id",
+              "on": "_id",
+              whenMatched: "replace",
+              whenNotMatched: "insert"
+            }}
+        ]
+
+- ActorFromTemplate:
+    TemplateName: WordCountTemplate
+    TemplateParameters:
+      Name: AllWordCountUseExchange
+      ActivePhase: [5]
+      Pipeline:
+        [
+            {$project: {wordOfDesc: {$split: ["$longDescription", " "]}}},
+            {$unwind: "$wordOfDesc"},
+            {$group: {_id: "$wordOfDesc", count: {$sum: 1}}},
+            {$count: "count"},
+            {$merge: {
+              into: "target_range_id",
+              "on": "_id",
+              whenMatched: "replace",
+              whenNotMatched: "insert"
+            }}
+        ]
+
+# Override the default mongodb_setup.standalone with a custom mongodb_setup.standalone-bestbuy
+# which loads in the BestBuy data.
+# Ideally we would override the test_control, so we don't have to duplicate mongodb_setup
+# for every one we want to run BestBuy on.
 AutoRun:
 - When:
     mongodb_setup:
